@@ -1,0 +1,19 @@
+# Raw challenge data (about 6 GB) - download from the PHM Society, see README.md
+Train/
+phm2026data-test_date/
+Data_Challenge_2026.pdf
+
+# Rebuilt by src/extract_features.py
+data/
+
+# Python
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+.venv/
+venv/
+
+# OS / editor
+Thumbs.db
+.DS_Store
+.vscode/
