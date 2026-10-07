@@ -2,6 +2,13 @@
 
 Analysis and modelling of the [PHM Europe 2026 Data Challenge](https://data.phmsociety.org/phm-europe-2026-conference-data-challenge/) dataset: a servomotor opens and closes a subway ticket gate until it can no longer close, and the task is to predict how many cycles each test door has left.
 
+## Links
+
+- **Competition page and leaderboard:** https://data.phmsociety.org/phm-europe-2026-conference-data-challenge/
+- **Dataset download (1.6 GB zip):** https://phm-datasets.s3.us-east-1.amazonaws.com/Data_Challenge_PHME2026_dataset.zip
+- **Challenge description and data format (PDF):** https://data.phmsociety.org/wp-content/uploads/sites/9/2026/05/Data_Challenge_2026.pdf
+- **Original study of the test bench:** Soualhi, Nguyen and Medjaher (2022), https://doi.org/10.1016/j.compind.2022.103766
+
 ## The question
 
 Given the sensor recordings of a door up to some point in its life, how many more cycles will it run before it fails, and how confident can that estimate honestly be?
@@ -93,7 +100,7 @@ data/                                     derived tables (rebuilt by the code, n
 
 ## Reproducing
 
-1. Download the dataset from the challenge page and unpack it so that the project contains `Train/Train/Train_1 ...` and `phm2026data-test_date/Test/Test/Test_1 ...` (plus `phm2026data-test_date/Test.zip` for the timestamp check in notebook 1).
+1. Download the [dataset zip](https://phm-datasets.s3.us-east-1.amazonaws.com/Data_Challenge_PHME2026_dataset.zip) from the [competition page](https://data.phmsociety.org/phm-europe-2026-conference-data-challenge/) and unpack it so that the project contains `Train/Train/Train_1 ...` and `phm2026data-test_date/Test/Test/Test_1 ...` (plus `phm2026data-test_date/Test.zip` for the timestamp check in notebook 1).
 2. Install the requirements:
    ```
    python -m venv .venv
@@ -107,4 +114,4 @@ data/                                     derived tables (rebuilt by the code, n
 
 ## Data
 
-The dataset is published by the PHM Society for the PHM Europe 2026 Data Challenge and comes from the PIMSSIS test bench described in Soualhi, Nguyen and Medjaher (2022), https://doi.org/10.1016/j.compind.2022.103766. The raw data (about 6 GB unpacked) is not included in this repository.
+The dataset is published by the PHM Society for the [PHM Europe 2026 Data Challenge](https://data.phmsociety.org/phm-europe-2026-conference-data-challenge/) ([direct download](https://phm-datasets.s3.us-east-1.amazonaws.com/Data_Challenge_PHME2026_dataset.zip)) and comes from the PIMSSIS test bench described in Soualhi, Nguyen and Medjaher (2022), https://doi.org/10.1016/j.compind.2022.103766. The raw data (about 6 GB unpacked) is not included in this repository.
