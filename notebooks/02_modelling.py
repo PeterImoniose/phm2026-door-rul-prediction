@@ -136,7 +136,9 @@ def score_table(df, cols, n=8, seed=0):
             rows[st][LABELS[c]] = s.groupby(level=0).mean().mean()
     return pd.DataFrame(rows).T
 
-test_stage_mix = pd.Series({"0 shocks": 4, "1 shock": 4, "2 shocks": 1, "3-4 shocks": 6, "5+ shocks": 4})  # from notebook 1
+test_shocks = pd.Series({r: len(detect_shocks(health_series(d))) for r, d in test.groupby("run")})
+test_stage_mix = pd.Series(stage_of(test_shocks)).value_counts().reindex(STAGES).fillna(0)
+print("test runs per stage:", test_stage_mix.astype(int).to_dict())
 tab_score = score_table(TL, MODELS + ["final"])
 tab_score.loc["weighted by test stage mix"] = (tab_score.mul(test_stage_mix / test_stage_mix.sum(), axis=0)).sum()
 tab_score.round(3)
@@ -158,13 +160,13 @@ fig.tight_layout(); fig.savefig(FIG / "08_model_comparison.png"); plt.show()
 # %% [markdown]
 # **Findings**
 #
-# - **Before the first shock, no model beats the survival prior.** The prior puts 42% of predictions within 20% of the true life; the regression and the boosted model manage 36 to 37%. On the plateau there is nothing in the degradation features to learn from, so the simplest method is kept for that stage.
-# - **One shock is not enough either.** All learned models reach about 50%, against 44% for the prior. A single shock says degradation has started but not how fast it will go.
-# - **From the second shock on, learning pays off quickly.** The boosted model reaches 73% within 20% after two shocks, 81% after three or four and 91% after five or more, with a median error falling from 12% to 7%. The prior stays near 50% throughout.
-# - **The naive physical extrapolation is worse than knowing nothing until five or more shocks.** At two shocks only 20% of its predictions are within 20%. The reason is the transition found in notebook 1: the first intervals are about twice as long as the steady ones, so extrapolating them overestimates life. The learned models use the same physics and correct for that bias.
-# - **Boosting beats the staged regression by a consistent but modest margin.** The staged regression is kept as the readable reference; it gets most of the gain with a handful of coefficients.
+# - **Before the first shock, the survival prior is the best choice for this metric.** It puts 43% of predictions within 20% of the true life; the regression and the boosted model manage 37 to 39%. The learned models do have a smaller typical error (22 to 25% against 29%), but fewer of their predictions land inside the band the challenge rewards, and on the challenge score the prior is ahead (0.49 against 0.45 to 0.46). The honest summary is that on the plateau all methods are right less than half the time.
+# - **The first shock already helps.** After one shock the boosted model reaches 58% within 20%, against 44% for the prior, because the model can use when the shock came and how long it has been since.
+# - **From the second shock on, the gain is large.** The boosted model reaches 77% within 20% after two shocks, 83% after three or four and 92% after five or more, with a median error of 7 to 12%. The prior stays near 50% throughout.
+# - **The naive physical extrapolation is worse than knowing nothing until five or more shocks.** At two shocks only 17% of its predictions are within 20%. The reason is the transition found in notebook 1: the first intervals are longer than the steady ones, so extrapolating them overestimates life. The learned models use the same physics and correct for that bias.
+# - **Boosting beats the staged regression by a consistent but modest margin** once shocks have been seen. The staged regression is kept as the readable reference; it gets most of the gain with a handful of coefficients.
 #
-# **Final model:** survival prior while no shock has been seen, gradient boosting afterwards. Weighted by the stage mix of the test set, its local challenge score is 0.63, against 0.51 for the prior alone and 0.48 for the physical extrapolation. The choice of model per stage was made on these same leave-one-run-out results, so the 0.63 is slightly optimistic.
+# **Final model:** survival prior while no shock has been seen, gradient boosting afterwards. Weighted by the stage mix of the test set (6 runs with no shock, 2 with one, 2 with two, 5 with three or four, 4 with five or more), its local challenge score is 0.65, against 0.51 for the prior alone and 0.49 for the physical extrapolation. The choice of model per stage was made on these same leave-one-run-out results, so the 0.65 is slightly optimistic.
 
 # %% [markdown]
 # ## 2.4 Watching a prediction evolve
@@ -189,9 +191,9 @@ fig.tight_layout(); fig.savefig(FIG / "09_prediction_evolution.png"); plt.show()
 # %% [markdown]
 # **Reading the plot**
 #
-# - `Train_6` is the shortest run in the data (336 cycles). The model predicts a typical life of about 2,100 until the first shock at cycle 220, then corrects within 40 cycles. For most of the run it was badly wrong, and nothing in the data could have told it otherwise.
+# - `Train_6` is the shortest run in the data (336 cycles). The model predicts a typical life of about 2,200 until the first shock near cycle 220, then corrects within about 40 cycles. For most of the run it was badly wrong, and nothing in the data could have told it otherwise.
 # - `Train_12` and `Train_20` show the usual pattern after the first shock: the prediction drops, then climbs as the intervals between shocks reveal a slow pace. `Train_20` is a long run (3,183 cycles) and is underestimated until about cycle 2,200.
-# - `Train_41` has a late first shock (cycle 1,539). The plateau prediction rises as the run outlives more and more of the training runs, and becomes jumpy past cycle 1,300, where only a handful of training runs are still on the plateau to compare with.
+# - `Train_41` has a late first shock (cycle 1,543). The plateau prediction rises as the run outlives more and more of the training runs, and becomes jumpy past cycle 1,300, where only a handful of training runs are still on the plateau to compare with.
 #
 # This is also how the model would be used in service: re-run after every cycle, with the estimate tightening as shocks accumulate.
 #
@@ -223,17 +225,38 @@ print("runs whose plateau-phase prediction is off by more than 50%:", per_run[pe
 # %% [markdown]
 # **Findings**
 #
-# - Every run whose plateau-phase prediction is off by more than 50% is a **short-lived** run (life under 1,320 cycles), and every one is overestimated. There are 11 of them among 46. A typical-life guess is the best available on the plateau, and it fails exactly for the doors that matter most in maintenance: the ones that fail early.
+# - Every run whose plateau-phase prediction is off by more than 50% is a **short-lived** run (life under 1,450 cycles), and every one is overestimated. There are 12 of them among 46. A typical-life guess is the best available on the plateau, and it fails exactly for the doors that matter most in maintenance: the ones that fail early.
 # - After three or more shocks the predictions follow the truth, with most points inside the 20% band. The exception is the very longest runs (above 3,500 cycles), where predictions scatter well outside the band: there are only three of them to learn from.
 #
-# ## 2.6 A finding about the dataset: the sensors identify the recording session
+
+# ## 2.6 A lead that did not hold up: early-cycle sensor features
 #
-# Notebook 1 found one plateau-phase sensor feature slightly above the noise ceiling and promised to re-test it under cross-validation. Here is that test: the boosting model is given seven extra features, each the average of a sensor summary over cycles 20 to 100, long before any degradation.
+# Notebook 1 found no single plateau-phase sensor feature that predicts life. A model can combine features, so the question is asked again here: the boosting model is given seven extra features, each the average of a sensor summary over cycles 20 to 100, long before any degradation (start-up timing of the velocity ramp, Hall state at rest, driver temperature, bus voltage, current levels).
 
 # %%
 cmp_cols = ["gbm", "gbm_session"]
 tab_s = pd.concat({"within 20%": by_stage(TL, cmp_cols, within20), "median error": by_stage(TL, cmp_cols, med_ape)}, axis=1)
 display(tab_s.round(3))
+
+def paired_gain(stage, a="gbm", b="gbm_session", n_boot=5000, seed=0):
+    """Per-run difference in the share within 20%, and a bootstrap interval over runs."""
+    d = TL[TL.stage == stage]
+    hit = lambda c: ((d[c] - d.life).abs() / d.life <= 0.20).groupby(d.run).mean()
+    diff = (hit(b) - hit(a)).to_numpy()
+    rng = np.random.default_rng(seed)
+    boot = [rng.choice(diff, len(diff)).mean() for _ in range(n_boot)]
+    return {"runs": len(diff), "gain": diff.mean(), "95% low": np.quantile(boot, 0.025), "95% high": np.quantile(boot, 0.975)}
+
+print("Gain in share within 20% from adding session features, with a bootstrap interval over runs")
+display(pd.DataFrame({st: paired_gain(st) for st in STAGES}).T.round(3))
+
+def lag1(v):
+    v = np.asarray(v, float); return np.corrcoef(v[:-1], v[1:])[0, 1]
+rng = np.random.default_rng(0)
+all_lives = train.groupby("run").size().apply(lambda n: int(np.ceil(n / 2)))
+obs = lag1(all_lives.sort_index().to_numpy())
+null = np.array([lag1(rng.permutation(all_lives.to_numpy())) for _ in range(5000)])
+print(f"Do neighbouring run numbers have similar lives? lag-1 correlation {obs:.2f}, permutation p = {(null >= obs).mean():.3f}")
 
 run_tab = pd.DataFrame({"life": lives, "first_shock": first_shocks}).join(sig_tr[["Cl_vel_ref_max", "Op_hall_first", "Cl_drv_temp_mean"]])
 fast = run_tab[~slow_tr.reindex(run_tab.index)]
@@ -249,17 +272,20 @@ ax.plot(run_tab.index, run_tab.Op_hall_first, marker="o", ms=4, lw=1, color=ps.B
 ax.set_title("Hall state at rest, in run order: consecutive runs share it"); ax.set_xlabel("training run number"); ax.set_ylabel("mean Hall state at start of opening")
 fig.tight_layout(); fig.savefig(FIG / "11_session_signature.png"); plt.show()
 print(fast.groupby("ramp").life.describe()[["count", "min", "50%", "max"]])
+from scipy.stats import mannwhitneyu
+u = mannwhitneyu(fast[fast.ramp == "delayed ramp start"].life, fast[fast.ramp == "normal ramp start"].life)
+print(f"Mann-Whitney test, delayed vs normal ramp start: p = {u.pvalue:.3f} (a comparison chosen after looking at the data)")
 
 # %% [markdown]
 # **Findings**
 #
-# - **The extra features help, but only early.** On the plateau the share within 20% rises from 36% to 44% and the median error falls from 27% to 20%. After one shock it rises from 50% to 56%. From two shocks on there is no gain.
-# - **They help because they identify the recording session, not the door's condition.**
-#   - Left plot: eight fast-condition runs start their velocity ramp slightly late. Their median life is 984 cycles, against 2,215 for the other 22. A start-up timing quirk has no way of shortening a door's life; those runs were simply recorded together, with a faster shock schedule.
-#   - Right plot: the Hall state in which the motor rests is shared by blocks of consecutive runs, which again marks runs recorded in the same session.
-# - Since the shocks are injected by a script, a session is really a group of runs that share injection settings. Features that identify the session therefore predict life **in this dataset**. They would say nothing about a door in service.
+# - **On the surface the extra features help on the plateau**: the share within 20% rises from 37% to 46%.
+# - **The gain does not survive a significance check.** Resampling the 46 runs gives a 95% interval for that gain of about -1 to +18 percentage points, which includes zero. After the first shock there is no gain at all (the estimates are zero or slightly negative), and the challenge score of the combined model is no better than the main model (table below).
+# - **There is a pattern behind the apparent gain, but it is weak evidence.** Eight fast-condition runs start their velocity ramp slightly late, and their median life is 984 cycles against 2,215 for the other 22 (left plot). The Hall state in which the motor rests is shared by blocks of consecutive runs (right plot), which suggests runs were recorded in sessions. If sessions shared shock-injection settings, features that mark the session would predict life in this dataset without saying anything about door health.
+# - That explanation is a hypothesis. The direct check, whether neighbouring run numbers have similar lives, gives a correlation of only 0.17 (permutation p = 0.09). And the delayed-ramp comparison was chosen after looking at the data, so its p-value overstates the evidence.
 #
-# **Decision.** This is a batch effect, the same kind of information as the file timestamps set aside in notebook 1. The main model does not use it. A second submission that does use it for runs with at most one shock is written alongside, so the difference can be measured on the leaderboard: in leave-one-run-out its weighted score is 0.64 against 0.63, a small gain concentrated in the earliest stage.
+# **Decision.** The main model does not use these features, for two independent reasons: the gain is not distinguishable from noise with 46 runs, and if it were real it would most plausibly be a property of how the experiments were scheduled, not of the door. A second submission that uses them for runs with no shock yet is written alongside purely as an experiment; cross-validation gives no reason to expect it to score higher.
+
 
 # %%
 tab_final = pd.concat({"within 20%": by_stage(TL, ["final", "final_session"], within20)}, axis=1)
@@ -282,12 +308,13 @@ bands.round(2)
 # %% [markdown]
 # **Findings**
 #
-# - On the plateau, 80% of true lives fall between 0.58 and 1.50 times the prediction. That is a range of 2.6 to 1.
-# - The range narrows with every stage, to 0.86 to 1.29 times the prediction after three or four shocks.
-# - At every stage in the region where test runs are cut, the 80% range is wider than the 20% band the challenge metric demands. A high score on every test run is therefore not something the degradation signal can deliver; a good model gets most of the later-stage runs inside the band and some of the early ones by luck.
+# - On the plateau, 80% of true lives fall between 0.58 and 1.48 times the prediction. That is a range of about 2.6 to 1.
+# - The range narrows with every shock seen, to 0.86 to 1.22 times the prediction after three or four shocks.
+# - Being within 20% of the true life corresponds to a true life between 0.83 and 1.25 times the prediction. On the plateau and after one or two shocks the 80% range is wider than that band, so a miss is likely whatever the model. From three shocks on the range fits inside the band.
 #
 # These ranges are empirical, from 46 runs, and are applied per stage. They are a description of past errors, not a guarantee.
 #
+
 # ## 2.8 Predictions for the 19 test runs
 #
 # The models are refitted on all 46 training runs and applied to each test run as it stands at its last recorded cycle.
@@ -321,10 +348,11 @@ fig.tight_layout(); fig.savefig(FIG / "12_test_predictions.png"); plt.show()
 # %% [markdown]
 # **Reading the predictions**
 #
-# - Predicted lives range from about 1,500 to 4,300 cycles.
-# - The four runs with no shock yet (`Test_3`, `Test_7`, `Test_9`, `Test_12`) all receive a typical life of 2,100 to 2,400 cycles with the widest ranges. These are the predictions most likely to be wrong, and the session-feature variant disagrees most on exactly three of them (`Test_3`, `Test_7`, `Test_9` show the delayed ramp start and are predicted 1,600 to 1,900 instead).
-# - The tightest predictions are for runs with several shocks and a clear pace, such as `Test_6`, `Test_16` and `Test_17`.
+# - Predicted lives range from about 1,500 to 4,200 cycles.
+# - The six runs with no shock yet (`Test_3`, `Test_4`, `Test_7`, `Test_9`, `Test_12`, `Test_14`) all receive a typical life of 2,200 to 2,600 cycles with the widest ranges. These are the predictions most likely to be wrong.
+# - The tightest predictions are for runs with three or more shocks and a clear pace, such as `Test_8`, `Test_16` and `Test_19`.
 #
+
 # ## 2.9 Submission file
 #
 # The submission needs one row per test measurement file: test id and RUL, semicolon-separated, no header. RUL follows the organisers' convention found in notebook 1: files are paired from the end of the run.
@@ -366,10 +394,10 @@ print(sub.head(4).to_csv(sep=";", header=False, index=False))
 #
 # **What was learned**
 #
-# 1. Remaining life becomes predictable from the **second shock**: about three in four predictions within 20%, rising to nine in ten after five shocks.
-# 2. Before the first shock, a sophisticated model is no better than the median of comparable past runs, and both are right less than half the time.
+# 1. Remaining life becomes predictable once degradation starts: 58% of predictions within 20% after one shock, about three in four after two, and nine in ten after five.
+# 2. Before the first shock, a sophisticated model is no better than the median of comparable past runs on the challenge metric, and every method is right less than half the time.
 # 3. Obvious physics applied naively (extrapolating the shock rate) is worse than a blind guess early on. The value of the model is in correcting a known bias, not in finding hidden signal.
-# 4. Sensor features that appear to give early warning are identifying the recording session. Catching that before trusting it is the most transferable lesson of the project.
+# 4. Early-cycle sensor features looked like an early warning and did not survive a significance check. With 46 runs, an apparent gain of nine percentage points can be noise, and it has to be tested before it is believed.
 #
 # **Limitations**
 #
@@ -377,8 +405,9 @@ print(sub.head(4).to_csv(sep=";", header=False, index=False))
 # - The challenge score is computed with a local reading of an ambiguous formula. It ranks models; it does not predict the leaderboard value.
 # - The data is semi-synthetic: real hardware, but degradation injected by a script on a random schedule. The conclusion that the plateau carries no warning is a statement about this test bench. A real door wearing out might well show precursors in current or temperature.
 # - Model choice per stage used the same cross-validation that reports the scores.
+# - Every result depends on the shock detector. Its thresholds (3 units, 5 cycles) were set from the structure of the data, not tuned on model accuracy, and a first version that was too sensitive had to be corrected (notebook 1, section 1.4).
 #
 # **Next steps**
 #
-# - Upload `results/submission.csv`, then `results/submission_session_features.csv`, and compare the leaderboard scores with the 0.63 and 0.64 expected here.
-# - If the session variant scores clearly higher, that confirms the batch effect extends to the test set and is worth reporting to the organisers.
+# - Upload `results/submission.csv` and compare the leaderboard score with the 0.65 expected here. The gap will show how close the local reading of the scoring formula is to the official one.
+# - `results/submission_session_features.csv` can be uploaded afterwards as an experiment on the session hypothesis.

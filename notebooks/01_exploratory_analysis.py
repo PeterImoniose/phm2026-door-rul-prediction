@@ -91,6 +91,14 @@ def rul_rule_holds(d):
 print("RUL == ceil(files remaining / 2) in", int(train.groupby("run").apply(rul_rule_holds).sum()), "of 48 train runs")
 print("stray items in train folders:", [p.relative_to(TRAIN_DIR).as_posix() for p in TRAIN_DIR.glob("Train_*/*") if p.is_dir()])
 
+# is the stray folder a copy of Train_46? compare every file
+from extract_features import list_run
+stray = TRAIN_DIR / "Train_45" / "output_19"
+t46 = [p for _, _, p in list_run(TRAIN_DIR / "Train_46")]
+n_stray = len(list(stray.glob("data_*.csv")))
+same = sum((stray / f"data_{i}.csv").read_bytes() == p.read_bytes() for i, p in enumerate(t46))
+print(f"output_19 has {n_stray} csv files, Train_46 has {len(t46)}; byte-identical in file order: {same}")
+
 # %% [markdown]
 # **Findings**
 #
@@ -99,7 +107,7 @@ print("stray items in train folders:", [p.relative_to(TRAIN_DIR).as_posix() for 
 # - **RUL is a pure countdown.** In all 48 training runs, RUL equals the number of files remaining divided by two, rounded up. It contains no information beyond "how long is this run". Predicting RUL for every file is therefore the same problem as predicting **one number per run: its total length**.
 # - About half the runs end on a `Closing` file with no matching `Opening`, so the countdown is paired from the end of the run, not from the cycle number in the file name. This matters for the submission file: rows must follow files, not cycles times two.
 # - The test set has 19 runs although the challenge document says 18.
-# - `Train_45` contains a stray folder `output_19` holding 3,457 raw files. They are byte-identical to the files of `Train_46` (checked by hash), so it is a packaging leftover and is ignored.
+# - `Train_45` contains a stray folder `output_19` holding 3,457 raw files. All 3,457 are byte-identical to the files of `Train_46` (compared file by file above), so it is a packaging leftover and is ignored.
 
 # %% [markdown]
 # ## 1.2 Anatomy of one cycle
@@ -162,7 +170,7 @@ pd.DataFrame({"closing ramp slope": [18, 10],
 # %% [markdown]
 # Only **two** groups are visible: a fast ramp (32 train runs, 12 test) and a slow ramp (16 train, 7 test).
 # Two of the three documented conditions share velocity and acceleration and differ only in *deceleration*, which happens after the 0.3 s window ends.
-# They cannot be separated from these recordings, so the analysis uses the two observable groups, `fast` and `slow`.
+# I could not separate those two from the reference profile inside the window, so the analysis uses the two observable groups, `fast` and `slow`.
 
 # %% [markdown]
 # ## 1.4 The health indicator
@@ -198,7 +206,8 @@ print(pd.DataFrame(noise).groupby("cond").median().round(2))
 #
 # - In slow runs the recording sometimes starts after the door has already begun to move, so the first sample reads several units low. Taking the **maximum** over the file removes that artefact. This is the health indicator used from here on.
 # - The door does not wear smoothly. It holds a level, then drops in a **step** (a "shock"), holds, and drops again, until the closing position falls to roughly 10% of nominal and the run ends.
-# - A simple step detector (`src/health.py`: a drop of at least 2 units that holds for 5 cycles) recovers the shocks.
+# - A step detector (`src/health.py`) recovers the shocks. It takes the rolling maximum of the indicator over 5 cycles, then looks for a drop of at least 3 units that holds for 5 cycles.
+# - **Why the detector is built that way.** A late trigger can only make the indicator read low, and in a few slow runs (for example `Train_34` above, and `Test_14`) even the file maximum flickers 2 units below the true level. A first version of the detector, with a 2-unit threshold and no rolling maximum, reported false "first shocks" in the middle of the plateau of those runs. Real shocks are 3 units or larger and never recover, which is what the current rule relies on. With it, no detected shock in any of the 67 runs is followed by a return to the previous level.
 
 # %%
 runs = []
@@ -234,10 +243,12 @@ for ax in axes: ax.axhline(19, color=ps.CRITICAL, lw=1, ls="--")
 axes[0].plot([], [], color=ps.BLUE, label="fast (32 runs)"); axes[0].plot([], [], color=ps.ORANGE, label="slow (16 runs)")
 axes[0].legend(fontsize=8); axes[0].set_xlabel("cycle"); axes[0].set_ylabel("closing position")
 axes[0].set_title("Lives range from 336 to 4,029 cycles")
-axes[1].set_xlabel("fraction of life used"); axes[1].set_title("The plateau ends anywhere between 2% and 97% of life")
+axes[1].set_xlabel("fraction of life used"); axes[1].set_title("The plateau ends between 15% and 76% of life (regular runs)")
 fig.tight_layout(); fig.savefig(FIG / "03_all_trajectories.png"); plt.show()
 
-frac = (R.first_shock / R.life)
+regular = R[R.hi_end <= 30]
+frac = (regular.first_shock / regular.life)
+print(f"regular runs: {len(regular)}; first shock at cycle {regular.first_shock.min():.0f} to {regular.first_shock.max():.0f}")
 print(f"first shock arrives at {frac.median():.0%} of life on median (range {frac.min():.0%} to {frac.max():.0%})")
 print("runs that end well above the failure threshold:")
 print(R[R.hi_end > 30][["cond", "life", "hi_end", "n_shocks"]])
@@ -247,8 +258,7 @@ print(R[R.hi_end > 30][["cond", "life", "hi_end", "n_shocks"]])
 #
 # - Every run has the same shape: a **flat healthy plateau** with no visible trend, then a **staircase** down to failure.
 # - Lives vary by a factor of twelve, and fast and slow runs overlap completely. The operating condition says little about life.
-# - The plateau is long and its length varies enormously: the first shock arrives at 46% of life on median, with a range of 2% to 97%. For a large part of most runs the health indicator is simply flat at nominal.
-# - A few slow runs show one small early step of about 2 units, hundreds of cycles before the main staircase begins. The detector counts it as a first shock, which is why the lower end of that range is so small.
+# - The plateau is long and its length varies enormously: in the 46 regular runs the first shock arrives at 47% of life on median, with a range of 15% to 76%. For a large part of most runs the health indicator is simply flat at nominal.
 # - Two runs are irregular. `Train_30` stops at a closing position of 170 after a single shock, and `Train_5` stops at 67. They did not reach the stated failure threshold, so their "RUL = 1" label marks the end of the recording rather than a failure like the others. They are kept in the tables but flagged, because a model trained on them would learn that doors can fail from near-nominal position.
 #
 # ### Shocks: when, how big, how often
@@ -280,14 +290,16 @@ ax.legend(fontsize=8)
 fig.tight_layout(); fig.savefig(FIG / "04_shock_statistics.png"); plt.show()
 
 print("shocks per run: median", R.n_shocks.median(), "| cycles from last shock to end: median", (R.life - R.last_shock).median())
-print("median absolute drop:", S2["drop"].median(), "units")
+print("median absolute drop:", S2["drop"].median(), "units; middle 80% of drops:", S2["drop"].quantile(0.1), "to", S2["drop"].quantile(0.9))
+print("most common drop sizes:", S2["drop"].round().value_counts().head(6).sort_index().astype(int).to_dict())
+print(f"Spearman, drop size vs level before the shock: {spearmanr(S2['drop'], S2.before)[0]:.2f}")
 
 # %% [markdown]
 # **Findings**
 #
-# - **The first shock is the big unknown.** It arrives anywhere between cycle 59 and cycle 1,539, with no preferred value.
-# - **Each shock removes about 9 position units, whatever the current level.** As a percentage of the current level the shocks grow from 5% to nearly 30%, but in absolute terms they are constant. The challenge document describes a multiplicative rule (each shock removes a percentage of the current position); the data behaves as if the percentage were applied to the *original* position. In practice this means the indicator falls roughly **linearly in the number of shocks**, and a run needs about 18 shocks to go from 190 to the threshold (the median run has 17.5).
-# - **After the first three or four shocks, the spacing settles.** The gap before the second shock is about twice as long (median 113 cycles), then the interval levels off at about 50.
+# - **The first shock is the big unknown.** In the regular runs it arrives anywhere between cycle 224 and cycle 1,543, with no preferred value.
+# - **Shock size does not depend on how degraded the door already is.** The median drop is 9 position units at every level (Spearman between drop size and level: 0.03). Individual shocks vary, mostly between 4 and 15 units, with the most common sizes at 3, 6, 9, 12 and 15. As a percentage of the *current* level the shocks therefore grow from 5% to nearly 30%. The challenge document describes a multiplicative rule (each shock removes a percentage of the current position); the data behaves as if the percentage were applied to the *original* position. In practice this means the indicator falls roughly **linearly in the number of shocks**, and a run needs about 18 shocks to go from 190 to the threshold (the median run has 17.5).
+# - **After the first three or four shocks, the spacing settles.** The early intervals are longer (median 84 cycles over shocks 2 to 4), then the interval levels off (median 47). Within a run the steady interval is typically about two thirds of the early one.
 #
 # The next plot shows that this steady interval is a property of each run.
 
@@ -316,6 +328,7 @@ print(f"Spearman, life after first shock vs steady interval: {rho(m.life - m.fir
 print(f"Spearman, cycle of first shock vs steady interval  : {rho(m.first_shock, m.gap_steady):.2f}")
 print(f"Spearman, early interval (shocks 2-4) vs steady    : {rho(m.gap_early, m.gap_steady):.2f}")
 print(f"steady interval ranges from {m.gap_steady.min():.0f} to {m.gap_steady.max():.0f} cycles")
+print(f"steady interval / early interval, median: {(m.gap_steady / m.gap_early).median():.2f}")
 
 # %% [markdown]
 # **A run's life is made of three parts**
@@ -323,10 +336,10 @@ print(f"steady interval ranges from {m.gap_steady.min():.0f} to {m.gap_steady.ma
 # | Part | What it is | Can it be seen coming? |
 # |---|---|---|
 # | Plateau | cycles until the first shock | No. Nothing in the position signal changes beforehand. |
-# | Transition | first three or four shocks, widely spaced | Partly. Only weakly related to what follows. |
+# | Transition | first three or four shocks, more widely spaced | Partly. |
 # | Steady decline | about 14 more shocks at a fixed interval of 13 to 114 cycles, depending on the run | Yes, once a few intervals have been seen. |
 #
-# The steady interval is strongly tied to how long the run lasts after the first shock (Spearman 0.78), but only weakly related to when the first shock happened (0.30). **A door that has not yet had a shock tells us almost nothing about how fast it will degrade once it starts.**
+# The steady interval is strongly tied to how long the run lasts after the first shock (Spearman 0.73). It is also moderately related to when the first shock happened (0.49): runs with a long plateau tend to degrade more slowly afterwards. **So the length of the plateau carries some information about the pace to come, but far less than the first few intervals do.**
 
 # %% [markdown]
 # ## 1.6 Do the other sensors add anything?
@@ -375,9 +388,10 @@ pd.DataFrame(out).round(2)
 # %% [markdown]
 # **Findings**
 #
-# - Within a run, the features that follow the health indicator are all position summaries from the `Opening` file. They restate the indicator; they do not lead it.
+# - Within a run, the features that follow the health indicator are position summaries, almost all from the `Opening` file. They restate the indicator; they do not lead it.
 # - Driver temperature also correlates within a run (about -0.7), but that is the electronics warming up as the run goes on. It tracks elapsed time, not damage.
-# - Across runs, the question is whether the best of 162 plateau-phase features beats what the best of 162 features achieves when the target is shuffled. For the steady shock interval and for total life, the best feature is **below** that noise ceiling. For the first shock, one feature (a Hall sensor state in the closing file) sits just above it, 0.56 against 0.51. With 46 runs, one marginal hit out of three targets and no physical reason for it, this is not treated as a usable early warning. It will be re-tested under cross-validation in the modelling notebook rather than assumed.
+# - Across runs, the question is whether the best of 162 plateau-phase features beats what the best of 162 features achieves when the target is shuffled. For all three targets (cycle of the first shock, steady shock interval, total life) the best feature is **below** that noise ceiling. No single sensor feature gives a convincing early warning.
+# - This is a one-feature-at-a-time test with 46 runs, so it has little power. Notebook 2 repeats the question with a model that can combine features, under cross-validation, and finds a small effect with a different explanation.
 #
 # This fits how the data was made: the shocks are injected by a script on a random schedule. They are not caused by wear that a current or temperature sensor could pick up early.
 
@@ -407,7 +421,7 @@ print(f"share of training runs whose first shock falls inside the documented 1 t
 # **Findings**
 #
 # - A cycle takes about 5 seconds in both conditions, so cycle count and elapsed time are interchangeable.
-# - The document says the first shock is drawn from 3,600 to 7,200 seconds. Converted to time, only 48% of training runs have their first shock in that window; most of the rest are earlier. The documented ranges are an example, not the actual settings of every run.
+# - The document says the first shock is drawn from 3,600 to 7,200 seconds. Converted to time, 52% of training runs have their first shock in that window; the others range from 0.3 to 2.2 hours. The documented ranges are an example, not the actual settings of every run.
 # - A caution for anyone using this dataset: archive timestamps are metadata about how the experiment campaign was scheduled. They are not sensor data and would not exist in deployment. This project uses them only for the unit conversion above and **not** as a model input.
 
 # %% [markdown]
@@ -419,6 +433,7 @@ print(f"share of training runs whose first shock falls inside the documented 1 t
 T = runs[runs.set == "test"].set_index("run")
 T["cycles_seen"] = test.groupby("run").cycle.max()
 T["stage"] = np.select([T.n_shocks == 0, T.n_shocks <= 2, T.n_shocks <= 4], ["no shock yet", "1-2 shocks", "3-4 shocks"], "5+ shocks")
+print("test runs by stage:", T.stage.value_counts().to_dict(), "| with four shocks or fewer:", int((T.n_shocks <= 4).sum()))
 print(T[["cond", "cycles_seen", "hi_end", "n_shocks", "first_shock", "stage"]].to_string())
 
 fig, axes = plt.subplots(1, 2, figsize=(12, 4))
@@ -443,7 +458,7 @@ fig.tight_layout(); fig.savefig(FIG / "06_test_truncation.png"); plt.show()
 # **Findings**
 #
 # - No test run is anywhere near failure. The most degraded ones are cut off at a closing position of about 113, with more than half of the staircase still to come.
-# - Four test runs are cut off **before any shock** and five more after only one or two. For those nine runs the steady shock interval, the one thing that predicts remaining life well, has not been observed. Only four runs have five or more shocks.
+# - Six test runs are cut off **before any shock** and four more after only one or two. For those ten runs the steady shock interval, the one thing that predicts remaining life well, has not been observed. Only four runs have five or more shocks.
 # - So the test set sits mostly in the hard part of the problem identified above.
 #
 # ## 1.9 How predictable is life at each stage?
@@ -490,7 +505,7 @@ pd.DataFrame(rows).round(3)
 # **Findings**
 #
 # - **Knowing only the stage is not enough.** Whether a run is on the plateau or has had eight shocks, the 90th percentile of remaining life is 3 to 7 times the 10th. The stage alone never pins life down.
-# - **Knowing the run's own shock rate is what helps.** A back-of-envelope extrapolation (shocks still needed times the mean interval seen so far) has a median error in total life of 27% after three shocks, 12% after six and about 5% after ten.
+# - **Knowing the run's own shock rate is what helps.** A back-of-envelope extrapolation (shocks still needed times the mean interval seen so far) has a median error in total life of 26% after three shocks, 10% after six and about 5% after ten.
 # - That extrapolation is biased long at first, because the early intervals are wider than the steady ones. This is the transition effect from section 1.5, and correcting it is an obvious job for a model.
 # - Fifteen of the 19 test runs have four shocks or fewer, which is the regime where even the informed estimate is off by 20% or more.
 #
@@ -532,13 +547,13 @@ fig.tight_layout(); fig.savefig(FIG / "07_metric_sensitivity.png"); plt.show()
 # **How the door fails**
 #
 # - One signal carries the degradation: the closing position, read from the start of each `Opening` file.
-# - It is flat for a long and highly variable plateau, then falls in steps of about 9 units. After three or four steps the interval between steps is constant within a run and differs between runs by a factor of nine.
-# - Other sensors mirror position and show no convincing early warning during the plateau, which is consistent with the shocks being injected on a random schedule.
+# - It is flat for a long and highly variable plateau, then falls in steps averaging 9 units, whatever the current level. After three or four steps the interval between steps is constant within a run and differs between runs by a factor of nine.
+# - Other sensors mirror position, and no single sensor feature shows a convincing early warning during the plateau, which is consistent with the shocks being injected on a random schedule.
 #
 # **The problem to solve**
 #
 # - Remaining life can be estimated to within about 5% once ten shocks have been seen, to about 25% after three, and is close to unknowable before the first one.
-# - Fifteen of the 19 test runs are cut off with four shocks or fewer, four of them with none.
+# - Fifteen of the 19 test runs are cut off with four shocks or fewer, six of them with none.
 # - The metric has a cliff at 20% error in total life, which is the typical error in exactly the regime where the test set sits.
 #
 # The leaderboard shows the same picture from the outside: most teams score between 0.4 and 0.8, and three teams sit at 0.996 or above. A near-perfect score would require knowing the length of runs that have not started degrading, which the sensor data in this analysis does not support. That gap is treated here as a reason for caution about what the leaderboard measures, not as a target.

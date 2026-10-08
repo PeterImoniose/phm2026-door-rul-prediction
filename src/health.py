@@ -8,8 +8,10 @@ door and falls in steps towards about 15 at failure.
 import numpy as np
 import pandas as pd
 
-MIN_DROP = 2.0   # position units; the feedback itself jitters by +-1
+MIN_DROP = 3.0   # position units; real shocks are 3 units or more, jitter is 1 to 2
 CONFIRM = 5      # cycles a new level must hold before it counts as a shock
+SMOOTH = 5       # rolling-maximum window applied before detection
+INIT = 20        # cycles used to establish the starting level
 
 
 def health_series(run_df):
@@ -23,17 +25,21 @@ def detect_shocks(hi):
 
     Returns a DataFrame with one row per shock: cycle, level before, level after,
     percentage drop, and cycles since the previous shock (or since start).
-    Only the cycles up to and including the confirmation window are used, so the
-    detection at cycle c needs data up to c + CONFIRM - 1.
+
+    A late recording trigger can only make the indicator read low, never high, so
+    the series is first replaced by its rolling maximum over the last SMOOTH cycles.
+    A shock is then a drop of at least MIN_DROP that holds for CONFIRM cycles.
+    Everything is causal: a shock at cycle c is confirmed with data up to
+    c + CONFIRM - 1, and the rolling maximum delays it by at most SMOOTH - 1 cycles.
     """
-    x = hi.to_numpy()
     cyc = hi.index.to_numpy()
-    level = float(np.median(x[:CONFIRM]))
+    x = hi.rolling(SMOOTH, min_periods=1).max().to_numpy()
+    level = float(np.median(x[:INIT]))
     rows, last = [], 0
-    i = 1
+    i = CONFIRM
     while i <= len(x) - CONFIRM:
         new = float(np.median(x[i:i + CONFIRM]))
-        if new <= level - MIN_DROP and x[i] <= level - MIN_DROP:
+        if new <= level - MIN_DROP and x[i] <= level - MIN_DROP + 1:
             rows.append({"cycle": int(cyc[i]), "before": level, "after": new,
                          "pct": 100 * (1 - new / level), "gap": int(cyc[i] - last)})
             level, last = new, int(cyc[i])

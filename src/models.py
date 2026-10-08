@@ -12,7 +12,7 @@ from scoring import score_run
 DEGRADATION_FEATURES = ["t", "slow", "hi_now", "n_shocks", "needed", "first_shock", "since_last",
                         "since_first", "gap_mean", "gap_last", "gap_min", "drop_mean", "extrap_life"]
 
-# Averages over cycles 20 to 100 that turn out to identify the recording session (notebook 2, section 2.6)
+# Averages over cycles 20 to 100, tested as a possible early signal and not used in the main model (notebook 2, section 2.6)
 SESSION_FEATURES = ["Cl_vel_ref_max", "Cl_hall_mean", "Op_hall_first", "Cl_drv_temp_mean",
                     "Cl_vbus_mean", "Cl_cur_rms", "Op_cur_rms"]
 
@@ -111,8 +111,8 @@ def predict_all(train_df, test_df, lives, first_shocks):
     # final model: nothing beats the prior before the first shock; boosted trees after it
     no_shock = (test_df["n_shocks"] == 0).to_numpy()
     out["final"] = np.where(no_shock, out["prior"], out["gbm"])
-    early = (test_df["n_shocks"] <= 1).to_numpy()
-    out["final_session"] = np.where(early, out["gbm_session"], out["gbm"])
+    # experimental variant: session features only where no shock has been seen yet
+    out["final_session"] = np.where(no_shock, out["gbm_session"], out["gbm"])
     return out
 
 
